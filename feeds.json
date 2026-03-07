@@ -79,7 +79,7 @@
   },
   {
     "id": 1772191308625,
-    "name": "Computer Vase",
+    "name": "ComputerBase",
     "url": "https://www.computerbase.de/rss/news.xml",
     "enabled": true
   },
@@ -93,6 +93,24 @@
     "id": 1772197049722,
     "name": "4Players",
     "url": "https://feeds2.feedburner.com/4playersNews",
+    "enabled": true
+  },
+  {
+    "id": 100,
+    "name": "Kotaku",
+    "url": "https://kotaku.com/rss",
+    "enabled": true
+  },
+  {
+    "id": 101,
+    "name": "Polygon",
+    "url": "https://www.polygon.com/rss/index.xml",
+    "enabled": true
+  },
+  {
+    "id": 102,
+    "name": "TechRadar",
+    "url": "https://www.techradar.com/rss",
     "enabled": true
   }
 ]
