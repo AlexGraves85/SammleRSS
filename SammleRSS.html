@@ -884,15 +884,15 @@
         // ========== PROXY MANAGER ==========
         const proxyManager = {
             proxies: [
-                // rss2json ist am zuverlässigsten - zuerst probieren
-                { url: 'https://api.rss2json.com/v1/api.json?rss_url=', type: 'rss2json', fails: 0, success: 0 },
-                { url: 'https://rss2json.com/v1/api.json?rss_url=', type: 'rss2json-alt', fails: 0, success: 0 },
-                // Andere Proxies als Fallback
+                // rss2json - zuverlässigster, mit count=100 für mehr Items
+                { url: 'https://api.rss2json.com/v1/api.json?rss_url=', type: 'rss2json', fails: 0, success: 0, count: 100 },
+                // corsproxy.io - neuer kostenloser Proxy
+                { url: 'https://corsproxy.io/?', type: 'corsproxy', fails: 0, success: 0 },
+                // allorigins Varianten
                 { url: 'https://api.allorigins.win/raw?url=', type: 'allorigins-raw', fails: 0, success: 0 },
                 { url: 'https://api.allorigins.win/get?url=', type: 'allorigins', fails: 0, success: 0 },
+                // Fallbacks
                 { url: 'https://rss.jesgoo.com/fetch?url=', type: 'jesgoo', fails: 0, success: 0 },
-                { url: 'https://rssapi.org/feed?', type: 'rssapi', fails: 0, success: 0 },
-                { url: 'https://api.ryte.com/v1/rss?url=', type: 'ryte', fails: 0, success: 0 },
             ],
             
             getActiveProxies() {
@@ -985,7 +985,12 @@
                         encodedUrl = encodeURIComponent(url.replace(/[^\x00-\x7F]/g, ''));
                     }
                     
-                    const fullUrl = proxy.url + encodedUrl;
+                    // Füge count Parameter für rss2json hinzu um mehr Items zu laden
+                    let fullUrl = proxy.url + encodedUrl;
+                    if (proxy.count) {
+                        fullUrl += '&count=' + proxy.count;
+                        debugLog('[Proxy] ' + proxy.type + ' - count=' + proxy.count);
+                    }
                     const res = await fetch(fullUrl, { 
                         headers: { 'Accept': 'application/rss+xml, application/xml, text/xml, */*' },
                         signal: controller.signal
@@ -1029,6 +1034,12 @@
                             if (json.contents) return { ok: true, text: () => Promise.resolve(json.contents) };
                         } else {
                             const text = await res.text();
+                            // Prüfe auf HTML-Fehlerstatt XML
+                            if (text.includes('<!DOCTYPE html') || text.includes('<html') || text.includes('<head>') || text.includes('<body')) {
+                                debugLog('[Proxy] ' + proxy.type + ' gibt HTML zurück, überspringe');
+                                proxyManager.markFail(proxy.type);
+                                continue;
+                            }
                             if (text.length > 50 && (text.includes('<') || text.includes('<?'))) {
                                 return { ok: true, text: async () => text };
                             }
@@ -1103,7 +1114,7 @@
         // ZENTRALE KONFIGURATION - Alle Magic Numbers hier
         const CONFIG = {
             // Debug
-            DEBUG: false,                    // Debug-Logs aktivieren/deaktivieren
+            DEBUG: true,                     // Debug-Logs aktivieren/deaktivieren
             
             // Cache
             CACHE_TTL: 300000,           // 5 Minuten in ms
@@ -1115,7 +1126,7 @@
             PHASE1_ITEMS: 50,           // MEHR Items pro Feed in Phase 1
             PHASE1_MAX_ITEMS: 500,       // MEHR initiale Anzeige
             PHASE1_TIMEOUT: 20000,       // Längerer Timeout
-            PHASE2_ITEMS: -1,           // ALLE Items in Phase 2
+            PHASE2_ITEMS: 200,           // MEHR Items in Phase 2 (rss2json limit = 100)
             INFINITE_SCROLL_THRESHOLD: 10, // Infinite Scroll: laden wenn 10 items vom Ende entfernt
             
             // Timeouts
@@ -1600,16 +1611,33 @@
             
             // Load theme - Purple als Standard erzwingen
             let theme = localStorage.getItem('rss_theme');
-            if (!theme) {
-                theme = 'purple';
-                safeSetItem('rss_theme', 'purple');
-                console.log('Standard-Theme gesetzt: purple');
-            }
-            console.log('Aktuelles Theme:', theme);
+            console.log('[Theme] Geladen aus localStorage:', theme);
             
+            if (!theme || theme === 'null' || theme === 'undefined') {
+                theme = 'purple';
+                console.log('[Theme] Kein Theme gefunden, setze auf purple');
+            }
+            
+            // Speichere immer das Theme (stellt sicher, dass es persistiert)
+            try {
+                localStorage.setItem('rss_theme', theme);
+            } catch(e) {
+                console.warn('[Theme] Konnte nicht speichern:', e);
+            }
+            
+            console.log('[Theme] Aktuelles Theme:', theme);
+            
+            // Setze den Dropdown-Wert
             const themeEl = document.getElementById('theme-select');
             if (themeEl) {
-                themeEl.value = theme;
+                // Prüfe ob der Wert existiert
+                const options = Array.from(themeEl.options).map(o => o.value);
+                if (options.includes(theme)) {
+                    themeEl.value = theme;
+                } else {
+                    themeEl.value = 'purple';
+                    theme = 'purple';
+                }
             }
             applyTheme(theme);
             
@@ -2102,7 +2130,7 @@
                 const results = [];
                 const delay = ms => new Promise(res => setTimeout(res, ms));
                 
-                async function fetchWithConcurrency(feeds, limit, itemsPerFeed, onProgress, skipDateFilter = false) {
+                async function fetchWithConcurrency(feeds, limit, itemsPerFeed, onProgress, skipDateFilter = false, forceRefresh = false) {
                     const queue = [...feeds];
                     const running = new Set();
                     const results = [];
@@ -2110,7 +2138,9 @@
                     async function processFeed(feed) {
                         const startTime = Date.now();
                         try {
-                            const items = await fetchFeed(feed, skipDateFilter, itemsPerFeed);
+                            // Phase 2 (skipDateFilter=true) soll immer frische Daten laden, nicht den Cache von Phase 1
+                            const skipCache = skipDateFilter || forceRefresh;
+                            const items = await fetchFeed(feed, skipDateFilter, itemsPerFeed, skipCache);
                             recordFeedLatency(feed.url, Date.now() - startTime);
                             results.push({ feed: feed, items: items, success: items.length > 0 });
                             if (onProgress) onProgress(feed, items.length);
@@ -2194,7 +2224,8 @@
                             updateLoadingUI('Phase 2: Feeds werden geladen...', 45 + Math.round(Math.random() * 30));
                         }
                     },
-                    true // skipDateFilter = TRUE für Phase 2 - ALLE Items (auch älter als 30 Tage)
+                    true,  // skipDateFilter = TRUE für Phase 2 - ALLE Items (auch älter als 30 Tage)
+                    forceRefresh  // forceRefresh = true um Cache zu überspringen
                 );
                 
                 console.log('[Phase2] Abgeschlossen in ' + (Date.now() - phase2Start) + 'ms');
@@ -2334,9 +2365,13 @@
         async function fetchFeed(feed, skipDateFilter = false, limit = -1, skipCache = false) {
             const cacheKey = feed.url;
             const cached = newsCache[cacheKey];
-            if (cached && !skipCache && Date.now() - cached.time < CONFIG.CACHE_TTL) {
+            const isCached = cached && !skipCache && Date.now() - cached.time < CONFIG.CACHE_TTL;
+            if (isCached) {
+                debugLog('[fetchFeed] ' + feed.name + ': Cache verwendet (' + cached.items.length + ' items), limit=' + limit);
                 return limit > 0 ? cached.items.slice(0, limit) : cached.items;
             }
+            
+            debugLog('[fetchFeed] ' + feed.name + ': Frische Daten laden (skipCache=' + skipCache + ', skipDateFilter=' + skipDateFilter + ')');
             
             try {
                 const res = await Promise.race([
@@ -2370,6 +2405,8 @@
                 
                 // Limit anwenden (wenn angegeben, sonst alle)
                 const items = limit > 0 ? allItems.slice(0, limit) : allItems;
+                
+                debugLog('[fetchFeed] ' + feed.name + ': ' + allItems.length + ' alle, ' + items.length + ' zurückgegeben (limit=' + limit + ', skipDateFilter=' + skipDateFilter + ')');
                 
                 if (!items.length && !skipDateFilter) throw new Error('Keine Einträge gefunden');
                 
