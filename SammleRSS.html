@@ -1808,7 +1808,15 @@
                 if (tabContent) tabContent.classList.add('active');
                 
                 // KEIN automatisches Laden mehr - nur bei explizitem Bedarf
-                if (tab === 'feeds') renderFeeds();
+                if (tab === 'feeds') {
+                    renderFeeds();
+                    // Lade Interval-Einstellung
+                    const intervalEl = document.getElementById('interval-settings');
+                    if (intervalEl) {
+                        const stored = localStorage.getItem('rss_interval') || '0';
+                        intervalEl.value = stored;
+                    }
+                }
                 if (tab === 'settings') loadSettingsToUI();
             } catch (e) {
                 console.error('switchTab error:', e);
@@ -2869,8 +2877,11 @@
         }
         
         function setIntervalFromSettings() {
-            const v = document.getElementById('interval-settings').value;
-            safeSetItem('rss_interval', v);
+            const el = document.getElementById('interval-settings');
+            if (!el) return;
+            const v = el.value;
+            console.log('[setInterval] Wert geändert zu:', v);
+            localStorage.setItem('rss_interval', v);
             setupAutoRefresh();
         }
         
