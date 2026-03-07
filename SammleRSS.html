@@ -1606,7 +1606,11 @@
             
             const interval = localStorage.getItem('rss_interval') || '0';
             const intervalEl = document.getElementById('interval-settings');
-            if (intervalEl) intervalEl.value = interval;
+            console.log('[Init] Interval Wert:', interval, 'Element gefunden:', !!intervalEl);
+            if (intervalEl) {
+                intervalEl.value = interval;
+                console.log('[Init] Interval gesetzt auf:', intervalEl.value);
+            }
             setupAutoRefresh();
             
             // Load theme - Purple als Standard erzwingen
@@ -2880,10 +2884,16 @@
             const v = localStorage.getItem('rss_interval') || '0';
             const el = document.getElementById('interval-settings');
             if (el) el.value = v;
-            if (intervalId) clearInterval(intervalId);
-            if (countdownId) clearInterval(countdownId);
+            
+            // Timer aufräumen
+            if (intervalId) { clearInterval(intervalId); intervalId = null; }
+            if (countdownId) { clearInterval(countdownId); countdownId = null; }
+            
+            console.log('[AutoRefresh] Wert:', v, 'IntervalId:', intervalId);
+            
             if (v > 0) {
                 const intervalMs = parseInt(v);
+                console.log('[AutoRefresh] Starte Timer für', intervalMs, 'ms');
                 intervalId = setInterval(() => {
                     loadAllNews(false);
                     resetCountdown();
@@ -2891,9 +2901,11 @@
                 nextRefreshTime = Date.now() + intervalMs;
                 countdownId = setInterval(updateCountdown, 1000);
                 updateGreeting();
+                console.log('[AutoRefresh] Timer gestartet, nextRefreshTime:', nextRefreshTime);
             } else {
                 nextRefreshTime = 0;
                 updateGreeting();
+                console.log('[AutoRefresh] Manuell - kein Timer');
             }
         }
         
