@@ -1114,7 +1114,7 @@
         // ZENTRALE KONFIGURATION - Alle Magic Numbers hier
         const CONFIG = {
             // Debug
-            DEBUG: true,                     // Debug-Logs aktivieren/deaktivieren
+            DEBUG: false,                    // Debug-Logs aktivieren/deaktivieren
             
             // Cache
             CACHE_TTL: 300000,           // 5 Minuten in ms
@@ -1568,26 +1568,29 @@
             // Parsing läuft im Haupt-Thread mit DOMParser
             // setupParserWorker();
             
-            // Versuche feeds.json vom Server/Datei zu laden
-            try {
-                const response = await fetch('feeds.json');
-                if (response.ok) {
-                    const fileFeeds = await response.json();
-                    if (Array.isArray(fileFeeds) && fileFeeds.length > 0) {
-                        feeds = fileFeeds;
-                        console.log('Feeds aus feeds.json geladen:', feeds.length);
-                        saveFeeds(); // Auch in localStorage speichern
+            // Zuerst: Lade Feeds aus localStorage (manuell hinzugegte Feeds haben Vorrang!)
+            let storedFeeds = safeGetItem('rss_feeds', []);
+            let storedGroups = safeGetItem('rss_groups', []);
+            
+            // Nur feeds.json laden wenn localStorage leer ist
+            if (!storedFeeds || storedFeeds.length === 0) {
+                try {
+                    const response = await fetch('feeds.json');
+                    if (response.ok) {
+                        const fileFeeds = await response.json();
+                        if (Array.isArray(fileFeeds) && fileFeeds.length > 0) {
+                            storedFeeds = fileFeeds;
+                            console.log('Feeds aus feeds.json geladen:', storedFeeds.length);
+                            saveFeeds();
+                        }
                     }
+                } catch (e) {
+                    console.log('feeds.json nicht gefunden oder Fehler:', e.message);
                 }
-            } catch (e) {
-                console.log('feeds.json nicht gefunden oder Fehler:', e.message);
             }
             
-            // Initialize from localStorage using safe helper (fallback)
-            if (!feeds || !feeds.length) {
-                feeds = safeGetItem('rss_feeds', []);
-                feedGroups = safeGetItem('rss_groups', []);
-            }
+            feeds = storedFeeds || [];
+            feedGroups = storedGroups || [];
             newsCache = safeGetItem('rss_cache', {});
             readStatus = loadReadStatus();
             feedGroups = safeGetItem('rss_groups', []);
