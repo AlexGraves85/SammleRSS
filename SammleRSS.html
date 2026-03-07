@@ -2546,11 +2546,10 @@
                 news.sort((a, b) => (a.feed || '').localeCompare(b.feed || ''));
             }
             
-            // Infinite Scroll: Initiale Anzeige begrenzen
-            const initialDisplayCount = 50;
-            const newsToDisplay = news.slice(0, initialDisplayCount);
-            displayedNewsCount = newsToDisplay.length;
-            allNewsLoaded = news.length <= initialDisplayCount;
+            // Infinite Scroll: ALLE Items sofort anzeigen (kein Klicken nötig)
+            const newsToDisplay = news;
+            displayedNewsCount = news.length;
+            allNewsLoaded = true;
             
             grid.innerHTML = newsToDisplay.map(n => {
                 const isRead = readStatus[n.link];
@@ -2579,21 +2578,8 @@
                 </article>
             `}).join('');
             
-            // Infinite Scroll aktivieren
-            setupInfiniteScroll(news);
-            
-            // Status anzeigen
-            if (!allNewsLoaded) {
-                const statusEl = document.getElementById('infinite-scroll-status');
-                if (!statusEl) {
-                    const el = document.createElement('div');
-                    el.id = 'infinite-scroll-status';
-                    el.style.cssText = 'text-align:center;padding:10px;color:var(--muted);cursor:pointer;';
-                    el.onclick = () => loadMoreNews(news);
-                    grid.parentNode.appendChild(el);
-                }
-                updateInfiniteScrollStatus(news.length);
-            }
+            // Infinite Scroll deaktiviert - alle Items werden sofort angezeigt
+            // Kein "Mehr laden" Button mehr nötig
         }
         
         function setupInfiniteScroll(allNews) {
