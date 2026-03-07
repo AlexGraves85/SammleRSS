@@ -1,0 +1,98 @@
+[
+  {
+    "id": 1,
+    "name": "GameStar",
+    "url": "https://www.gamestar.de/rss/gamestar.rss",
+    "enabled": true
+  },
+  {
+    "id": 2,
+    "name": "PC Games",
+    "url": "http://pcgames.de/feed.cfm?menu_alias=home/",
+    "enabled": true
+  },
+  {
+    "id": 3,
+    "name": "Eurogamer.de",
+    "url": "https://www.eurogamer.de/feed",
+    "enabled": true
+  },
+  {
+    "id": 4,
+    "name": "GamesWirtschaft",
+    "url": "https://www.gameswirtschaft.de/feed/",
+    "enabled": true
+  },
+  {
+    "id": 5,
+    "name": "Mein-MMO.de",
+    "url": "https://mein-mmo.de/feed/",
+    "enabled": true
+  },
+  {
+    "id": 6,
+    "name": "GamePro",
+    "url": "https://www.gamepro.de/rss/gpnews.rss",
+    "enabled": true
+  },
+  {
+    "id": 7,
+    "name": "IGN Deutschland",
+    "url": "https://de.ign.com/feed.xml",
+    "enabled": true
+  },
+  {
+    "id": 9,
+    "name": "Xboxdynasty",
+    "url": "https://www.xboxdynasty.de/feed/",
+    "enabled": true
+  },
+  {
+    "id": 10,
+    "name": "PlayStation Info",
+    "url": "https://www.playstationinfo.de/feed/",
+    "enabled": true
+  },
+  {
+    "id": 14,
+    "name": "GIGA Games",
+    "url": "https://www.giga.de/rss/giga.rss",
+    "enabled": true
+  },
+  {
+    "id": 16,
+    "name": "GamersGlobal",
+    "url": "https://www.gamersglobal.de/news/feed",
+    "enabled": true
+  },
+  {
+    "id": 18,
+    "name": "Gamer's Palace",
+    "url": "https://gamers-palace.de/feed/",
+    "enabled": true
+  },
+  {
+    "id": 1772191049305,
+    "name": "ntower",
+    "url": "https://www.ntower.de/news-feed",
+    "enabled": true
+  },
+  {
+    "id": 1772191308625,
+    "name": "Computer Vase",
+    "url": "https://www.computerbase.de/rss/news.xml",
+    "enabled": true
+  },
+  {
+    "id": 1772196957403,
+    "name": "PC Games Hardware",
+    "url": "https://www.pcgameshardware.de/feed.cfm",
+    "enabled": true
+  },
+  {
+    "id": 1772197049722,
+    "name": "4Players",
+    "url": "https://feeds2.feedburner.com/4playersNews",
+    "enabled": true
+  }
+]
