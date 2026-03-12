@@ -1128,10 +1128,11 @@
             // Lade-Performance
             CONCURRENT_LIMIT: 10,        // Parallele Feed-Requests
             CONCURRENT_LIMIT_BACKGROUND: 3, 
-            PHASE1_ITEMS: 50,           // MEHR Items pro Feed in Phase 1
-            PHASE1_MAX_ITEMS: 500,       // MEHR initiale Anzeige
+            PHASE1_ITEMS: 50,           // Items pro Feed in Phase 1
+            PHASE1_MAX_ITEMS: 500,       // Globale Obergrenze Phase 1
             PHASE1_TIMEOUT: 20000,       // Längerer Timeout
-            PHASE2_ITEMS: 200,           // MEHR Items in Phase 2 (rss2json limit = 100)
+            PHASE2_ITEMS: 200,           // Items pro Feed in Phase 2
+            PHASE2_MAX_ITEMS: 800,       // Globale Obergrenze Phase 1+2 kombiniert
             INFINITE_SCROLL_THRESHOLD: 10, // Infinite Scroll: laden wenn 10 items vom Ende entfernt
             
             // Timeouts
@@ -2130,7 +2131,6 @@
                 if (!enabled.length) { 
                     grid.innerHTML = '<div class="empty">Keine Feeds aktiviert</div>'; 
                     if (loadingEl) loadingEl.style.display = 'none';
-                    isLoading = false;
                     return; 
                 }
                 
@@ -2144,7 +2144,6 @@
                     console.log('[Cache-First] Background-Refresh ohne Grid-Clear');
                     await performBackgroundRefresh(enabled, loadingEl);
                     hasInitialLoad = true;
-                    isLoading = false;
                     return;
                 }
                 
@@ -2259,12 +2258,11 @@
                 
                 console.log('[Phase2] Abgeschlossen in ' + (Date.now() - phase2Start) + 'ms');
                 
-                // Kombination: Phase 1 + Phase 2 Items
+                // Kombination: Phase 1 + Phase 2 Items (mit globaler Obergrenze)
                 const phase1Success = phase1Results.filter(r => r.success && r.items?.length > 0);
                 const phase2Success = phase2Results.filter(r => r.success && r.items?.length > 0);
                 const phase2ItemCount = phase2Success.reduce((sum, r) => sum + r.items.length, 0);
                 console.log('[Phase2] ' + phase2Success.length + ' Feeds geladen, ' + phase2ItemCount + ' Items');
-                console.log('[Kombiniert] Phase1: ' + phase1ItemCount + ' + Phase2: ' + phase2ItemCount + ' = ' + (phase1ItemCount + phase2ItemCount));
                 
                 // Items kombinieren (Duplikate vermeiden)
                 const allItems = [];
@@ -2290,6 +2288,15 @@
                     });
                 });
                 
+                // Globale Obergrenze anwenden
+                const PHASE2_MAX_ITEMS = CONFIG.PHASE2_MAX_ITEMS || 1000;
+                if (allItems.length > PHASE2_MAX_ITEMS) {
+                    console.log('[Kombiniert] ' + allItems.length + ' Items -> kürze auf ' + PHASE2_MAX_ITEMS);
+                    allItems.length = PHASE2_MAX_ITEMS;
+                } else {
+                    console.log('[Kombiniert] Phase1: ' + phase1ItemCount + ' + Phase2: ' + phase2ItemCount + ' = ' + allItems.length);
+                }
+                
                 currentNews = allItems;
                 currentNews.forEach(n => n.read = readStatus[n.link] || false);
                 currentNews.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -2311,7 +2318,11 @@
                 
                 // Phase 3: Vollständiges Laden aller Items im Hintergrund
                 console.log('[Phase3] Starte Hintergrund-Laden aller Items...');
-                performFullBackgroundLoad(enabled);
+                try {
+                    performFullBackgroundLoad();
+                } catch(e) {
+                    console.error('[Phase3] Startfehler:', e);
+                }
             } catch (e) {
                 console.error('loadAllNews error:', e);
                 const loadingEl = document.getElementById('loading-indicator');
@@ -2405,11 +2416,19 @@
         // Phase 3: Vollständiges Laden aller Items im Hintergrund (keine 30-Tage-Begrenzung)
         let isPhase3Running = false;
         
-        async function performFullBackgroundLoad(enabled) {
+        async function performFullBackgroundLoad() {
             if (isPhase3Running) {
                 console.log('[Phase3] Bereits aktiv, überspringe');
                 return;
             }
+            
+            // Hole aktive Feeds
+            const enabled = sortFeedsByLatency(feeds.filter(f => f.enabled));
+            if (!enabled.length) {
+                console.log('[Phase3] Keine aktiven Feeds');
+                return;
+            }
+            
             isPhase3Running = true;
             
             const delay = ms => new Promise(res => setTimeout(res, ms));
@@ -2485,7 +2504,16 @@
                         
                         // Füge neue Items hinzu und sortiere nach Datum
                         currentNews = [...currentNews, ...trulyNewItems];
-                        currentNews.sort((a, b) => new Date(b.date) - new Date(a.date));
+                        
+                        // Globale Obergrenze für Gesamt-Items (Phase 1+2+3)
+                        const MAX_TOTAL_ITEMS = 1500;
+                        if (currentNews.length > MAX_TOTAL_ITEMS) {
+                            currentNews.sort((a, b) => new Date(b.date) - new Date(a.date));
+                            currentNews.length = MAX_TOTAL_ITEMS;
+                            console.log('[Phase3] Gesamt-Items begrenzt auf ' + MAX_TOTAL_ITEMS);
+                        } else {
+                            currentNews.sort((a, b) => new Date(b.date) - new Date(a.date));
+                        }
                         
                         // Aktualisiere Anzeige (aber nicht scrollen, Nutzer liest bereits)
                         renderNews(currentNews);
