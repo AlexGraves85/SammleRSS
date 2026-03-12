@@ -887,26 +887,36 @@
         // ========== PROXY MANAGER ==========
         const proxyManager = {
             proxies: [
-                // rss2json - zuverlässigster, mit count=100 für mehr Items
+                // rss2json - klassischer Proxy
                 { url: 'https://api.rss2json.com/v1/api.json?rss_url=', type: 'rss2json', fails: 0, success: 0, count: 100 },
-                // corsproxy.io - neuer kostenloser Proxy
+                // corsproxy.io - klassischer Proxy
                 { url: 'https://corsproxy.io/?', type: 'corsproxy', fails: 0, success: 0 },
-                // allorigins Varianten
+                // allorigins
                 { url: 'https://api.allorigins.win/raw?url=', type: 'allorigins-raw', fails: 0, success: 0 },
                 { url: 'https://api.allorigins.win/get?url=', type: 'allorigins', fails: 0, success: 0 },
-                // Fallbacks
+                // Neue Proxies
+                { url: 'https://api.codetabs.com/v1/proxy?quest=', type: 'codetabs', fails: 0, success: 0 },
+                { url: 'https://rssproxy.io/?url=', type: 'rssproxy', fails: 0, success: 0 },
+                { url: 'https://rss2json.com/v1/api.json?rss_url=', type: 'rss2json-alt', fails: 0, success: 0, count: 100 },
+                // Fallback
                 { url: 'https://rss.jesgoo.com/fetch?url=', type: 'jesgoo', fails: 0, success: 0 },
             ],
             
             getActiveProxies() {
-                return this.proxies.filter(p => p.fails < 5);
+                // Nur Proxies nutzen, die nicht dauerhaft geblacklistet sind
+                return this.proxies.filter(p => p.fails >= 0 && p.fails < 5);
             },
             
             markFail(type) {
                 const p = this.proxies.find(proxy => proxy.type === type);
                 if (p) {
-                    p.fails++;
-                    console.log('[ProxyManager] ' + type + ' fail ' + p.fails + '/3');
+                    // Maximal 3 Fehlversuche loggen, danach still blacklisten
+                    if (p.fails < 3) {
+                        p.fails++;
+                        console.log('[ProxyManager] ' + type + ' fail ' + p.fails + '/3');
+                    } else {
+                        p.fails = 5; // als inaktiv markieren, aber nicht mehr spammen
+                    }
                 }
             },
             
@@ -1136,8 +1146,8 @@
             INFINITE_SCROLL_THRESHOLD: 10, // Infinite Scroll: laden wenn 10 items vom Ende entfernt
             
             // Timeouts
-            FEED_TIMEOUT: 6000,         // Timeout pro Feed (ms)
-            PROXY_TIMEOUT: 3000,        // Timeout für Proxy-Requests (ms)
+            FEED_TIMEOUT: 12000,        // Timeout pro Feed (ms) - erhöht
+            PROXY_TIMEOUT: 8000,        // Timeout für Proxy-Requests (ms) - erhöht
             
             // Datumsfilter
             DAYS_BACK: 30,              // Tage rückwärts für Artikel
@@ -1153,7 +1163,7 @@
         
         // ========== WEB WORKER FÜR XML-PARSING ==========
         let parserWorker = null;
-        let parserWorkerAvailable = false; // Worker deaktiviert - DOMParser nicht verfügbar in Worker
+        let parserWorkerAvailable = false;
         let parserWorkerRequestId = 0;
         let parserWorkerBlobUrl = null;
         const parserWorkerPending = new Map();
@@ -1172,12 +1182,32 @@
         }
         
         function setupParserWorker() {
+            // Capability-Check im Hauptthread (Worker/Blob/URL vorhanden?)
+            if (typeof Worker === 'undefined' || typeof Blob === 'undefined' || typeof URL === 'undefined') {
+                console.log('[Worker] Nicht verfügbar (fehlende APIs)');
+                parserWorkerAvailable = false;
+                return;
+            }
+            
             try {
                 const workerCode = `
+                    let domParserSupported = true;
+                    try {
+                        const testParser = new DOMParser();
+                        testParser.parseFromString('<rss></rss>', 'text/xml');
+                    } catch (e) {
+                        domParserSupported = false;
+                    }
+                    
                     self.onmessage = function(e) {
                         const { id, rawText, config } = e.data;
-                        const DAYS_BACK = config.DAYS_BACK || 30;
+                        const DAYS_BACK = (config && config.DAYS_BACK) || 30;
                         const thirtyDaysAgo = Date.now() - (DAYS_BACK * 24 * 60 * 60 * 1000);
+                        
+                        if (!domParserSupported) {
+                            self.postMessage({ id, error: 'DOMParser im Worker nicht verfügbar' });
+                            return;
+                        }
                         
                         try {
                             const parser = new DOMParser();
@@ -1207,7 +1237,7 @@
                                 }
                                 
                                 if (!img) {
-                                    const content = item.querySelector('content\\:encoded, content')?.textContent || '';
+                                    const content = item.querySelector('content\\\\:encoded, content')?.textContent || '';
                                     const imgMatch = content.match(/<img[^>]+src=["']([^"']+)["']/);
                                     if (imgMatch) img = imgMatch[1];
                                 }
@@ -1226,7 +1256,7 @@
                             
                             self.postMessage({ id, items });
                         } catch (err) {
-                            self.postMessage({ id, error: err.message });
+                            self.postMessage({ id, error: err && err.message ? err.message : String(err) });
                         }
                     };
                 `;
@@ -1240,6 +1270,10 @@
                     const pending = parserWorkerPending.get(id);
                     if (pending) {
                         if (error) {
+                            if (error === 'DOMParser im Worker nicht verfügbar') {
+                                console.warn('[Worker] DOMParser im Worker nicht verfügbar – Worker wird deaktiviert');
+                                cleanupParserWorker();
+                            }
                             pending.reject(new Error(error));
                         } else {
                             pending.resolve(items);
@@ -1407,6 +1441,14 @@
             return div.innerHTML;
         }
         
+        // Decoding von HTML-Entities (z.B. &auml; -> ä), danach wird wieder escapet
+        function decodeHtmlEntitiesSafe(str) {
+            if (typeof str !== 'string') return '';
+            const div = document.createElement('div');
+            div.innerHTML = str;
+            return div.textContent || div.innerText || '';
+        }
+        
         function escapeXml(str) {
             if (!str) return '';
             return String(str)
@@ -1565,14 +1607,18 @@
         }
         
         async function init() {
+            if (window.__sammleRssInitialized) {
+                console.log('[Init] Bereits initialisiert – überspringe zweiten Aufruf');
+                return;
+            }
+            window.__sammleRssInitialized = true;
             console.log('Initialisiere SammleRSS...');
             
             // Lade Feed-Latenzen aus localStorage
             loadFeedLatency();
             
-            // Web Worker deaktiviert - DOMParser nicht verfügbar in Worker
-            // Parsing läuft im Haupt-Thread mit DOMParser
-            // setupParserWorker();
+            // Parser-Worker mit Capability-Check initialisieren (DOMParser im Worker)
+            setupParserWorker();
             
             // Zuerst: Lade Feeds aus localStorage (manuell hinzugegte Feeds haben Vorrang!)
             let storedFeeds = safeGetItem('rss_feeds', []);
@@ -1972,16 +2018,19 @@
             
             grid.innerHTML = currentNews.map((n, index) => {
                 const isRead = readStatus[n.link];
-                const linkEsc = escapeHtml(n.link);
-                const hasImg = n.img && n.img.length > 0;
+                const linkEsc = escapeHtml(n.link || '');
+                const rawImg = typeof n.img === 'string' ? n.img : '';
+                const isHttpImg = rawImg.startsWith('http://') || rawImg.startsWith('https://') || rawImg.startsWith('//');
+                const safeImg = isHttpImg ? rawImg : '';
+                const hasImg = safeImg.length > 0;
                 const feedNameEsc = escapeHtml(n.feed || 'Feed');
                 
                 return `
                 <article class="news-card ${index === 0 ? 'active' : ''}" data-shorts-index="${index}">
-                    ${hasImg ? `<img src="${escapeHtml(n.img)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
+                    ${hasImg ? `<img src="${escapeHtml(safeImg)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
                     ${!isRead ? '<span class="new-badge" style="position:absolute;top:20px;left:20px;">NEU</span>' : ''}
                     <div class="news-card-content">
-                        <h3><a href="${linkEsc}" target="_blank" rel="noopener">${escapeHtml(n.title)}</a></h3>
+                        <h3><a href="${linkEsc}" target="_blank" rel="noopener">${escapeHtml(n.title || '')}</a></h3>
                         <div class="meta">
                             <span>${feedNameEsc}</span>
                             <span>•</span>
@@ -2131,6 +2180,7 @@
                 if (!enabled.length) { 
                     grid.innerHTML = '<div class="empty">Keine Feeds aktiviert</div>'; 
                     if (loadingEl) loadingEl.style.display = 'none';
+                    isLoadingPromise = null;
                     return; 
                 }
                 
@@ -2144,6 +2194,7 @@
                     console.log('[Cache-First] Background-Refresh ohne Grid-Clear');
                     await performBackgroundRefresh(enabled, loadingEl);
                     hasInitialLoad = true;
+                    isLoadingPromise = null;
                     return;
                 }
                 
@@ -2728,28 +2779,35 @@
             allNewsLoaded = true;
             
             grid.innerHTML = newsToDisplay.map(n => {
-                const isRead = readStatus[n.link];
-                const linkEsc = escape(n.link);
+                const linkRaw = n.link || '';
+                const isRead = readStatus[linkRaw];
+                const encodedLink = encodeURIComponent(linkRaw);
                 let faviconUrl = '';
                 try { faviconUrl = n.feedUrl ? new URL(n.feedUrl).hostname : ''; } catch(e) {}
                 const favicon = faviconUrl ? `<img src="https://www.google.com/s2/favicons?domain=${faviconUrl}&sz=32" style="width:14px;height:14px;display:inline;vertical-align:middle;margin-left:4px;" onerror="this.style.display='none'">` : '';
-                const hasImg = n.img && n.img.length > 0;
-                const feedNameEsc = escape(n.feed || 'Feed');
+                const rawImg = typeof n.img === 'string' ? n.img : '';
+                const isHttpImg = rawImg.startsWith('http://') || rawImg.startsWith('https://') || rawImg.startsWith('//');
+                const safeImg = isHttpImg ? rawImg : '';
+                const hasImg = safeImg.length > 0;
+                const feedNameEsc = escape(decodeHtmlEntitiesSafe(n.feed || 'Feed'));
                 const dateLabel = formatDate(n.date);
+                const titleText = decodeHtmlEntitiesSafe(n.title || '');
+                const descRaw = decodeHtmlEntitiesSafe(n.desc || '');
+                const descPlain = descRaw.replace(/<[^>]+>/g, '').slice(0, CONFIG.DESC_LENGTH);
                 return `
-                <article class="news-card ${isRead ? 'read' : 'unread'}" data-link="${linkEsc}" onclick="markAsRead(this.dataset.link)">
+                <article class="news-card ${isRead ? 'read' : 'unread'}" data-link="${encodedLink}" onclick="markAsRead(this.dataset.link)">
                     ${showImages ? `<div class="news-card-img" style="position:relative;height:160px;overflow:hidden;background:var(--border);display:flex;align-items:center;justify-content:center;">
-                        ${hasImg ? `<img src="${n.img}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">` : ''}
+                        ${hasImg ? `<img src="${escape(safeImg)}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'">` : ''}
                         ${!hasImg ? `<span style="color:var(--muted);font-size:2rem;">📰</span>` : ''}
                         ${!isRead ? `<span class="new-badge">NEU</span>` : ''}
                     </div>` : ''}
                     <div class="news-card-content">
-                        <h3><a href="${n.link}" target="_blank" onclick="event.stopPropagation(); markAsRead(this.dataset.link)">${escape(n.title)}</a></h3>
+                        <h3><a href="${escape(linkRaw)}" data-link="${encodedLink}" target="_blank" onclick="event.stopPropagation(); markAsRead(this.dataset.link)">${escape(titleText)}</a></h3>
                         <div class="meta">
-                            <span class="feed-preview" data-feed-url="${escape(n.feedUrl || '')}" data-feed-name="${feedNameEsc}" title="${escape(n.feedUrl || '')}">${n.feed}${favicon}</span>
+                            <span class="feed-preview" data-feed-url="${escape(n.feedUrl || '')}" data-feed-name="${feedNameEsc}" title="${escape(n.feedUrl || '')}">${escape(decodeHtmlEntitiesSafe(n.feed || 'Feed'))}${favicon}</span>
                             ${dateLabel ? `<span style="margin-left:8px;color:var(--muted);font-size:0.8rem;">${escape(dateLabel)}</span>` : ''}
                         </div>
-                        <p>${escape(n.desc?.replace(/<[^>]+>/g, '').slice(0, CONFIG.DESC_LENGTH))}</p>
+                        <p>${escape(descPlain)}</p>
                     </div>
                 </article>
             `}).join('');
@@ -2898,9 +2956,18 @@
             catch { return d; }
         }
         
-        function markAsRead(link) {
-            if (!link || readStatus[link]) return;
-            readStatus[link] = true;
+        function markAsRead(linkKey) {
+            if (!linkKey) return;
+            
+            let url;
+            try {
+                url = decodeURIComponent(linkKey);
+            } catch (e) {
+                url = linkKey;
+            }
+            
+            if (!url || readStatus[url]) return;
+            readStatus[url] = true;
             safeSetItem('rss_read', readStatus);
             renderCurrentNews();
         }
