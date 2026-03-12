@@ -1143,6 +1143,7 @@
             PHASE1_TIMEOUT: 20000,       // Längerer Timeout
             PHASE2_ITEMS: 200,           // Items pro Feed in Phase 2
             PHASE2_MAX_ITEMS: 800,       // Globale Obergrenze Phase 1+2 kombiniert
+            PHASE2_HARD_TIMEOUT: 20000,  // Maximale Dauer Phase 2 (ms), danach Abbruch
             INFINITE_SCROLL_THRESHOLD: 10, // Infinite Scroll: laden wenn 10 items vom Ende entfernt
             
             // Timeouts
@@ -2294,18 +2295,34 @@
                 let phase2Results = [];
                 const phase2Start = Date.now();
                 
-                phase2Results = await fetchWithConcurrency(
-                    enabled, 
-                    CONCURRENT_LIMIT, 
-                    PHASE2_ITEMS,
-                    () => {
-                        if (loadingEl) {
-                            updateLoadingUI('Phase 2: Feeds werden geladen...', 45 + Math.round(Math.random() * 30));
-                        }
-                    },
-                    true,  // skipDateFilter = TRUE für Phase 2 - ALLE Items (auch älter als 30 Tage)
-                    forceRefresh  // forceRefresh = true um Cache zu überspringen
-                );
+                try {
+                    const phase2Promise = fetchWithConcurrency(
+                        enabled, 
+                        CONCURRENT_LIMIT, 
+                        PHASE2_ITEMS,
+                        () => {
+                            if (loadingEl) {
+                                updateLoadingUI('Phase 2: Feeds werden geladen...', 45 + Math.round(Math.random() * 30));
+                            }
+                        },
+                        true,  // skipDateFilter = TRUE für Phase 2 - ALLE Items (auch älter als 30 Tage)
+                        forceRefresh  // forceRefresh = true um Cache zu überspringen
+                    );
+                    
+                    const hardTimeout = CONFIG.PHASE2_HARD_TIMEOUT || 20000;
+                    phase2Results = await Promise.race([
+                        phase2Promise,
+                        new Promise(resolve => {
+                            setTimeout(() => {
+                                console.warn('[Phase2] Abgebrochen nach ' + hardTimeout + 'ms – verwende nur bereits geladene Ergebnisse');
+                                resolve([]);
+                            }, hardTimeout);
+                        })
+                    ]);
+                } catch (e) {
+                    console.warn('[Phase2] Fehler: ' + (e.message || e));
+                    phase2Results = [];
+                }
                 
                 console.log('[Phase2] Abgeschlossen in ' + (Date.now() - phase2Start) + 'ms');
                 
