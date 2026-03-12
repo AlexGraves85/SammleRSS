@@ -2308,6 +2308,10 @@
                 const proxyStats = proxyManager.proxies.map(p => p.type + ':' + p.success + '/' + (p.fails + p.success)).join(', ');
                 console.log('[Fertig] ' + currentNews.length + ' Einträge geladen | Proxies: ' + proxyStats);
                 resetCountdown();
+                
+                // Phase 3: Vollständiges Laden aller Items im Hintergrund
+                console.log('[Phase3] Starte Hintergrund-Laden aller Items...');
+                performFullBackgroundLoad(enabled);
             } catch (e) {
                 console.error('loadAllNews error:', e);
                 const loadingEl = document.getElementById('loading-indicator');
@@ -2394,6 +2398,114 @@
                 if (loadingEl) {
                     updateLoadingUI('Aktualisiert!', 100);
                     setTimeout(() => { if (loadingEl) loadingEl.style.display = 'none'; }, 500);
+                }
+            }
+        }
+        
+        // Phase 3: Vollständiges Laden aller Items im Hintergrund (keine 30-Tage-Begrenzung)
+        let isPhase3Running = false;
+        
+        async function performFullBackgroundLoad(enabled) {
+            if (isPhase3Running) {
+                console.log('[Phase3] Bereits aktiv, überspringe');
+                return;
+            }
+            isPhase3Running = true;
+            
+            const delay = ms => new Promise(res => setTimeout(res, ms));
+            const PHASE3_CONCURRENT = 1; // Langsam, damit Phase 1+2 nicht gestört werden
+            
+            console.log('[Phase3] Starte vollständiges Laden aller Items...');
+            
+            async function fetchWithConcurrencyPhase3(feeds, limit, onProgress) {
+                const queue = [...feeds];
+                const running = new Set();
+                const results = [];
+                let completed = 0;
+                
+                async function processFeed(feed) {
+                    try {
+                        // Phase 3: Lädt ALLE Items, ignoriert 30-Tage-Regel komplett
+                        const items = await fetchFeed(feed, true, -1, true); // skipDateFilter = true
+                        results.push({ feed: feed, items: items, success: items.length > 0 });
+                        completed++;
+                        if (onProgress) onProgress(completed, feeds.length, feed.name);
+                        return items.length;
+                    } catch (e) {
+                        results.push({ feed: feed, items: [], success: false, error: e.message });
+                        completed++;
+                        if (onProgress) onProgress(completed, feeds.length, feed.name);
+                        return 0;
+                    }
+                }
+                
+                while (queue.length > 0 || running.size > 0) {
+                    while (running.size < limit && queue.length > 0) {
+                        const feed = queue.shift();
+                        const promise = processFeed(feed).then(() => running.delete(promise));
+                        running.add(promise);
+                    }
+                    if (running.size > 0) {
+                        await Promise.race(Array.from(running));
+                    }
+                    await delay(100); // Längere Pause zwischen Requests
+                }
+                return results;
+            }
+            
+            try {
+                const loadingEl = document.getElementById('loading-indicator');
+                if (loadingEl) {
+                    loadingEl.style.display = 'flex';
+                }
+                
+                const phase3Results = await fetchWithConcurrencyPhase3(
+                    enabled,
+                    PHASE3_CONCURRENT,
+                    (completed, total, feedName) => {
+                        console.log('[Phase3] Lade ' + completed + '/' + total + ': ' + feedName);
+                        if (loadingEl) {
+                            updateLoadingUI('Phase 3: Vollständiges Laden... ' + completed + '/' + total, 50 + Math.round((completed / total) * 50));
+                        }
+                    }
+                );
+                
+                // Sammle alle neuen Items
+                const allNewItems = phase3Results
+                    .filter(r => r.success && r.items?.length > 0)
+                    .map(r => r.items)
+                    .flat();
+                
+                if (allNewItems.length > 0) {
+                    const existingLinks = new Set(currentNews.map(n => n.link));
+                    const trulyNewItems = allNewItems.filter(n => !existingLinks.has(n.link));
+                    
+                    if (trulyNewItems.length > 0) {
+                        console.log('[Phase3] ' + trulyNewItems.length + ' neue Einträge gefunden (insgesamt ' + allNewItems.length + ')');
+                        
+                        // Füge neue Items hinzu und sortiere nach Datum
+                        currentNews = [...currentNews, ...trulyNewItems];
+                        currentNews.sort((a, b) => new Date(b.date) - new Date(a.date));
+                        
+                        // Aktualisiere Anzeige (aber nicht scrollen, Nutzer liest bereits)
+                        renderNews(currentNews);
+                        renderGroupTabs();
+                    } else {
+                        console.log('[Phase3] Keine komplett neuen Einträge (alle bereits vorhanden)');
+                    }
+                }
+                
+                const totalItemsLoaded = phase3Results.reduce((sum, r) => sum + (r.items?.length || 0), 0);
+                console.log('[Phase3] Abgeschlossen: ' + totalItemsLoaded + ' Items geladen');
+                
+            } catch (e) {
+                console.log('[Phase3] Fehlgeschlagen:', e.message);
+            } finally {
+                isPhase3Running = false;
+                const loadingEl = document.getElementById('loading-indicator');
+                if (loadingEl) {
+                    updateLoadingUI('Vollständig geladen!', 100);
+                    setTimeout(() => { if (loadingEl) loadingEl.style.display = 'none'; }, 1000);
                 }
             }
         }
