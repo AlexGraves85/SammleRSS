@@ -657,7 +657,8 @@
                             <input type="checkbox" id="show-unread" onchange="toggleUnreadFilter()"> Nur ungelesene
                         </label>
                     </div>
-                    <button onclick="markAllRead()" style="width:100%;font-size:0.8rem;padding:6px;margin-bottom:12px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#fff;">Alle als gelesen</button>
+                    <button onclick="markAllRead()" style="width:100%;font-size:0.8rem;padding:6px;margin-bottom:6px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#fff;">Alle als gelesen</button>
+                    <button onclick="refreshNow()" style="width:100%;font-size:0.8rem;padding:6px;margin-bottom:12px;background:rgba(157,92,224,0.7);border:1px solid rgba(255,255,255,0.3);color:#fff;">Jetzt aktualisieren</button>
                     <div style="margin-bottom:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.2);">
                         <span style="font-weight:600;font-size:0.85rem;color:#fff;">📁 Gruppen</span>
                     </div>
@@ -2413,6 +2414,85 @@
                 console.log('[Background] Refresh fehlgeschlagen:', e.message);
             } finally {
                 isBackgroundRefreshing = false;
+            }
+        }
+        
+        async function refreshNow() {
+            const loadingEl = document.getElementById('loading-indicator');
+            
+            // Loader nur kurz sichtbar über dem bestehenden Grid
+            if (loadingEl) {
+                loadingEl.style.display = 'inline-block';
+                updateLoadingUI();
+            }
+            
+            try {
+                const enabled = sortFeedsByLatency(feeds.filter(f => f.enabled));
+                if (!enabled.length || !Array.isArray(currentNews)) {
+                    return;
+                }
+                
+                // Neueste bekannte Zeit pro Feed (nach feed.url)
+                const latestPerFeed = new Map();
+                currentNews.forEach(n => {
+                    if (!n.feedUrl || !n.date) return;
+                    const t = new Date(n.date).getTime();
+                    if (isNaN(t)) return;
+                    const key = n.feedUrl;
+                    const prev = latestPerFeed.get(key);
+                    if (prev == null || t > prev) latestPerFeed.set(key, t);
+                });
+                
+                const existingLinks = new Set(currentNews.map(n => n.link).filter(Boolean));
+                const CONCURRENT = 4;
+                const queue = [...enabled];
+                const running = new Set();
+                const newItems = [];
+                const delay = ms => new Promise(res => setTimeout(res, ms));
+                const perFeedLimit = CONFIG.PHASE1_ITEMS || 50;
+                
+                async function processFeed(feed) {
+                    try {
+                        const items = await fetchFeed(feed, true, perFeedLimit, true); // skipDateFilter=true, skipCache=true
+                        const cutoff = latestPerFeed.get(feed.url) || 0;
+                        
+                        for (const item of items) {
+                            if (!item.link) continue;
+                            if (existingLinks.has(item.link)) continue;
+                            const t = new Date(item.date).getTime();
+                            if (isNaN(t)) continue;
+                            if (cutoff && t <= cutoff) continue;
+                            newItems.push(item);
+                        }
+                    } catch (e) {
+                        console.log('[refreshNow] Feed fehlgeschlagen:', feed.name, e.message);
+                    }
+                }
+                
+                while (queue.length > 0 || running.size > 0) {
+                    while (running.size < CONCURRENT && queue.length > 0) {
+                        const feed = queue.shift();
+                        const p = processFeed(feed).then(() => running.delete(p));
+                        running.add(p);
+                    }
+                    if (running.size > 0) {
+                        await Promise.race(Array.from(running));
+                    }
+                    await delay(50);
+                }
+                
+                if (newItems.length > 0) {
+                    console.log('[refreshNow] ' + newItems.length + ' neue Einträge gefunden');
+                    currentNews = [...newItems, ...currentNews];
+                    currentNews.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    renderNews(currentNews);
+                    renderGroupTabs();
+                    scrollToTop(true);
+                } else {
+                    console.log('[refreshNow] Keine neueren Einträge gefunden');
+                }
+            } finally {
+                hideLoadingIndicator();
             }
         }
         
