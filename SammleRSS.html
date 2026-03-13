@@ -3071,7 +3071,6 @@
         }
         
         function markAllRead() {
-            if (!confirm('Alle Artikel als gelesen markieren?')) return;
             currentNews.forEach(n => { if (n.link) readStatus[n.link] = true; });
             safeSetItem('rss_read', readStatus);
             renderCurrentNews();
