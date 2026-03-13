@@ -1006,6 +1006,80 @@
         let hasInitialLoad = false;
         let isBackgroundRefreshing = false;
         let isLoadingPromise = null;
+        let originalTitle = 'SammleRSS';
+        let hasNewTitle = false;
+        let newItemCount = 0;
+        let lastKnownCount = 0;
+        let titleBlinkInterval = null;
+        
+        // Titel updaten (roter blinkender Punkt bei NEUEN Nachrichten)
+        function updateTitleWithNewCount() {
+            if (!currentNews || currentNews.length === 0) {
+                document.title = originalTitle;
+                stopTitleBlink();
+                return 0;
+            }
+            
+            // Zähle wirklich neue Items (nicht im localStorage als gelesen markiert)
+            const newItems = currentNews.filter(n => !readStatus[n.link]).length;
+            newItemCount = newItems;
+            
+            // Prüfe ob es NEUE Items gibt seit dem letzten Mal
+            const hasNewSinceLastVisit = newItems > 0 && newItems > lastKnownCount;
+            
+            if (hasNewSinceLastVisit && !document.hasFocus()) {
+                // Neue Items vorhanden - zeige blinkenden roten Punkt
+                startTitleBlink();
+            } else if (newItems === 0) {
+                // Keine neuen Items - normales Title
+                document.title = originalTitle;
+                stopTitleBlink();
+            }
+            
+            return newItems;
+        }
+        
+        // Blinkender Titel bei neuen Nachrichten
+        function startTitleBlink() {
+            if (titleBlinkInterval) return;
+            
+            hasNewTitle = true;
+            let showDot = true;
+            
+            titleBlinkInterval = setInterval(function() {
+                if (showDot) {
+                    document.title = originalTitle + ' 🟣';
+                } else {
+                    document.title = originalTitle;
+                }
+                showDot = !showDot;
+            }, 1000);
+        }
+        
+        function stopTitleBlink() {
+            if (titleBlinkInterval) {
+                clearInterval(titleBlinkInterval);
+                titleBlinkInterval = null;
+            }
+            hasNewTitle = false;
+            document.title = originalTitle;
+        }
+        
+        // Visibility Change Handler
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+                stopTitleBlink();
+            } else {
+                updateTitleWithNewCount();
+            }
+        });
+        
+        // Focus Handler
+        window.addEventListener('focus', function() {
+            // Beim Fokus: aktuelle Anzahl als "gelesen" merken
+            lastKnownCount = newItemCount;
+            stopTitleBlink();
+        });
         
         // Infinite Scroll
         let displayedNewsCount = 0;
@@ -2832,8 +2906,8 @@
                 </article>
             `}).join('');
             
-            // Infinite Scroll deaktiviert - alle Items werden sofort angezeigt
-            // Kein "Mehr laden" Button mehr nötig
+            // Titel updaten (roter Punkt bei neuen Nachrichten)
+            updateTitleWithNewCount();
         }
         
         function setupInfiniteScroll(allNews) {
